@@ -60,7 +60,7 @@ public unsafe partial class FastObjectInteract : DailyModuleBase
     private static HashSet<uint>? ImportantENPC;
 
     private static Config ModuleConfig = null!;
-    private static Throttler<string> MonitorThrottler = new();
+    private static readonly Throttler<string> MonitorThrottler = new();
 
     private static string BlacklistKeyInput = string.Empty;
     private static float WindowWidth;
@@ -271,7 +271,7 @@ public unsafe partial class FastObjectInteract : DailyModuleBase
 
     public override void OverlayUI()
     {
-        using (FontHelper.GetUIFont(ModuleConfig.FontScale).Push())
+        using (FontManager.GetUIFont(ModuleConfig.FontScale).Push())
         {
             ObjectToSelect? instanceChangeObject = null;
             ObjectToSelect? worldTravelObject = null;
@@ -349,14 +349,17 @@ public unsafe partial class FastObjectInteract : DailyModuleBase
             if (!ModuleConfig.SelectedKinds.Contains(objKind)) continue;
 
             var dataID = obj.DataId;
-            if (objKind == ObjectKind.EventNpc && !ImportantENPC.Contains(dataID))
+            var gameObj = (GameObject*)obj.Address;
+            if (objKind == ObjectKind.EventNpc)
             {
-                if (!ImportantENPC.Contains(dataID)) continue;
-                if (ENpcTitles.TryGetValue(dataID, out var ENPCTitle))
-                    objName = string.Format(ENPCTiltleText, ENPCTitle, obj.Name);
+                if (ImportantENPC.Contains(dataID))
+                {
+                    if (ENpcTitles.TryGetValue(dataID, out var ENPCTitle))
+                        objName = string.Format(ENPCTiltleText, ENPCTitle, obj.Name);
+                }
+                else if (gameObj->NamePlateIconId == 0) continue;
             }
 
-            var gameObj = (GameObject*)obj.Address;
             if (ModuleConfig.OnlyDisplayInViewRange)
             {
                 if (!TargetSystem_IsObjectInViewRange((nint)TargetSystem, (nint)gameObj)) continue;

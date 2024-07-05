@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Numerics;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -12,8 +11,6 @@ using DailyRoutines.Managers;
 using DailyRoutines.Modules;
 using Dalamud;
 using Dalamud.Game.ClientState.Keys;
-using Dalamud.Game.Text.SeStringHandling;
-using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Interface;
 using Dalamud.Interface.Colors;
 using Dalamud.Interface.Utility;
@@ -21,36 +18,23 @@ using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using Dalamud.Utility;
 using ImGuiNET;
-using Newtonsoft.Json;
 
 namespace DailyRoutines.Windows;
 
 public class Main : Window, IDisposable
 {
-    public class ModuleInfo
-    {
-        public Type             Module          { get; set; } = null!;
-        public string[]?        PrecedingModule { get; set; }
-        public string           ModuleName      { get; set; } = null!;
-        public string           Title           { get; set; } = null!;
-        public string           Description     { get; set; } = null!;
-        public string?          Author          { get; set; }
-        public bool             WithConfigUI    { get; set; }
-        public bool             WithConfig      { get; set; }
-        public ModuleCategories Category        { get; set; }
-    }
-
     private static readonly List<ModuleInfo> Modules = [];
     private static readonly Dictionary<ModuleCategories, List<ModuleInfo>> categorizedModules = [];
     private static readonly List<ModuleInfo> ModulesFavorite = [];
+    private static readonly List<ModuleInfo> ModulesEnabled = [];
 
-    internal static ImageCarousel? ImageCarousel;
+    internal static readonly ImageCarousel ImageCarouselInstance = new();
 
-    private const ImGuiWindowFlags ChildFlags 
-        = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.ChildWindow | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoDocking;
+    private const ImGuiWindowFlags ChildFlags = ImGuiWindowFlags.NoScrollbar;
 
     private static Vector2 LeftTabComponentSize;
     private static Vector2 LogoComponentSize;
+    private static Vector2 LogoDetailComponentSize;
     private static Vector2 CategoriesComponentSize;
 
     private static Vector2 UpperTabComponentSize;
@@ -75,7 +59,6 @@ public class Main : Window, IDisposable
             MinimumSize = new(650, 400),
         };
 
-        ForceMainWindow = true;
         SelectedTab = Service.Config.DefaultHomePage;
 
         if (Service.ClientState.ClientLanguage != (ClientLanguage)4)
@@ -85,12 +68,11 @@ public class Main : Window, IDisposable
         }
 
         RefreshModuleInfo();
-        MainSettings.Init();
     }
 
     public override void Draw()
     {
-        if (FontHelper.IsAnyFontBuilding)
+        if (FontManager.IsFontBuilding)
         {
             ImGui.SetWindowFontScale(3f);
             var textSize = ImGui.CalcTextSize(Service.Lang.GetText("Settings-FontBuilding"));
@@ -101,7 +83,29 @@ public class Main : Window, IDisposable
             return;
         }
 
-        using (FontHelper.UIFont.Push())
+        if (!OnlineStatsManager.IsTimeValid)
+        {
+            ImGui.SetWindowFontScale(3f);
+            var textSize = ImGui.CalcTextSize(Service.Lang.GetText("Settings-InvalidLocalData"));
+            var pos = new Vector2((ImGui.GetWindowWidth() - textSize.X) / 2f, (ImGui.GetWindowHeight() - textSize.Y) / 2f);
+            ImGui.SetCursorPos(pos);
+            ImGui.Text(Service.Lang.GetText("Settings-InvalidLocalData"));
+            ImGui.SetWindowFontScale(1f);
+            return;
+        }
+
+        if (Plugin.Version < OnlineStatsManager.LatestVersion.Version)
+        {
+            ImGui.SetWindowFontScale(3f);
+            var textSize = ImGui.CalcTextSize(Service.Lang.GetText("Settings-LowVersionWarning"));
+            var pos = new Vector2((ImGui.GetWindowWidth() - textSize.X) / 2f, (ImGui.GetWindowHeight() - textSize.Y) / 2f);
+            ImGui.SetCursorPos(pos);
+            ImGui.Text(Service.Lang.GetText("Settings-LowVersionWarning"));
+            ImGui.SetWindowFontScale(1f);
+            return;
+        }
+
+        using (FontManager.UIFont.Push())
         {
             DrawLeftTabComponent();
 
@@ -134,7 +138,7 @@ public class Main : Window, IDisposable
                 DrawCategoriesComponent();
             }
 
-            width = Math.Max(ImGui.GetItemRectSize().X, 250f * GlobalFontScale);
+            width = Math.Max(ImGui.GetItemRectSize().X, Service.Config.LeftTabWidth);
         }
 
         LeftTabComponentSize.X = width;
@@ -148,7 +152,7 @@ public class Main : Window, IDisposable
             ImGuiHelpers.CenterCursorFor(72f * GlobalFontScale);
             ImGui.Image(PresetData.Icon.ImGuiHandle, ScaledVector2(72f));
 
-            using (FontHelper.UIFont140.Push())
+            using (FontManager.UIFont140.Push())
             {
                 ImGuiHelpers.CenterCursorForText("Daily");
                 ImGuiOm.Text("Daily");
@@ -160,10 +164,10 @@ public class Main : Window, IDisposable
 
             ImGui.SetCursorPosY(ImGui.GetCursorPosY() - (4f * GlobalFontScale));
             ImGuiHelpers.CenterCursorForText($"[{Plugin.Version}]");
-            if (Plugin.Version < MainSettings.LatestVersionInfo.Version)
+            if (Plugin.Version < OnlineStatsManager.LatestVersion.Version)
             {
                 ImGui.TextColored(ImGuiColors.DPSRed, $"[{Plugin.Version}]");
-                ImGuiOm.TooltipHover(Service.Lang.GetText("LowVersionWarning"));
+                ImGuiOm.TooltipHover(Service.Lang.GetText("Settings-LowVersionWarning"));
             }
             else
                 ImGuiOm.TextDisabledWrapped($"[{Plugin.Version}]");
@@ -213,7 +217,7 @@ public class Main : Window, IDisposable
 
     private static void DrawCategoriesComponent()
     {
-        using (FontHelper.UIFont120.Push())
+        using (FontManager.UIFont120.Push())
         {
             var selectedModule = ModuleCategories.无;
             if (SelectedTab > 100)
@@ -222,17 +226,17 @@ public class Main : Window, IDisposable
             ImGuiHelpers.CenterCursorFor(CategoriesComponentSize.X);
             using (ImRaii.Group())
             {
-                var buttonSize = new Vector2(180f * GlobalFontScale, ImGui.CalcTextSize("你好").Y);
-
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImGuiColors.ParsedBlue);
-                ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImGuiColors.TankBlue);
-                ImGui.PushStyleColor(ImGuiCol.Button, SelectedTab == 3 ? ImGui.ColorConvertFloat4ToU32(ImGuiColors.TankBlue) : ImGui.GetColorU32(ImGuiCol.ChildBg));
-                if (ImGuiOm.ButtonIconWithText(FontAwesomeIcon.None, Service.Lang.GetText("Favorite"), buttonSize))
+                if (DrawCategorySelectButton(Service.Lang.GetText("Favorite"), SelectedTab == 3))
                 {
                     SearchString = string.Empty;
                     SelectedTab = 3;
                 }
-                ImGui.PopStyleColor(3);
+
+                if (DrawCategorySelectButton(Service.Lang.GetText("Enabled"), SelectedTab == 4))
+                {
+                    SearchString = string.Empty;
+                    SelectedTab = 4;
+                }
 
                 ScaledDummy(1f, 12f);
 
@@ -240,21 +244,29 @@ public class Main : Window, IDisposable
                 {
                     if (category == ModuleCategories.无) continue;
 
-                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImGuiColors.ParsedBlue);
-                    ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImGuiColors.TankBlue);
-                    ImGui.PushStyleColor(ImGuiCol.Button, selectedModule == category ? ImGui.ColorConvertFloat4ToU32(ImGuiColors.TankBlue) : ImGui.GetColorU32(ImGuiCol.ChildBg));
-
-                    if (ImGuiOm.ButtonIconWithText(FontAwesomeIcon.None, category.ToString(), buttonSize))
+                    if (DrawCategorySelectButton(category.ToString(), selectedModule == category))
                     {
                         SearchString = string.Empty;
                         SelectedTab = 100 + (int)category;
                     }
-
-                    ImGui.PopStyleColor(3);
                 }
             }
             CategoriesComponentSize = ImGui.GetItemRectSize();
         }
+    }
+
+    private static bool DrawCategorySelectButton(string text, bool condition)
+    {
+        var buttonSize = new Vector2(180f * GlobalFontScale, ImGui.CalcTextSize("你好").Y);
+
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImGuiColors.ParsedBlue);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, ImGuiColors.TankBlue);
+        ImGui.PushStyleColor(ImGuiCol.Button, 
+                             condition ? ImGui.ColorConvertFloat4ToU32(ImGuiColors.TankBlue) : ImGui.GetColorU32(ImGuiCol.ChildBg));
+        var button = ImGuiOm.ButtonIconWithText(FontAwesomeIcon.None, text, buttonSize);
+        ImGui.PopStyleColor(3);
+
+        return button;
     }
 
     #endregion
@@ -263,7 +275,7 @@ public class Main : Window, IDisposable
 
     private static void DrawUpperTabComponent()
     {
-        using (FontHelper.UIFont120.Push())
+        using (FontManager.UIFont120.Push())
         {
             float height;
             UpperTabComponentSize.X = ImGui.GetContentRegionAvail().X;
@@ -331,7 +343,7 @@ public class Main : Window, IDisposable
                                                                                          ? ImGuiWindowFlags.NoScrollWithMouse
                                                                                          : ImGuiWindowFlags.None)))
         {
-            // 0 - 主页; 1 - 设置; 2 - 搜索; 3 - 收藏
+            // 0 - 主页; 1 - 设置; 2 - 搜索; 3 - 收藏; 4 - 已启用
             // 大于 100 - 模块分类
             if (!string.IsNullOrWhiteSpace(SearchString))
             {
@@ -346,10 +358,13 @@ public class Main : Window, IDisposable
                     DrawHomePage();
                     break;
                 case 1:
-                    MainSettings.Draw();
+                    Settings.Draw();
                     break;
                 case 3:
                     DrawModules(ModulesFavorite);
+                    break;
+                case 4:
+                    DrawModules(ModulesEnabled);
                     break;
                 case > 100:
                     var selectedModule = (ModuleCategories)(SelectedTab % 100);
@@ -365,16 +380,19 @@ public class Main : Window, IDisposable
         ImGui.SetScrollHereY();
         using (ImRaii.Group())
         {
-            ImGui.Image(PresetData.Icon.ImGuiHandle, ScaledVector2(72f));
+            ImGui.Image(PresetData.Icon.ImGuiHandle, ScaledVector2(96f));
 
             ImGui.SameLine();
+            ImGui.SetCursorPosY(((96f * GlobalFontScale) - LogoDetailComponentSize.Y) * 0.5f);
             using (ImRaii.Group())
             {
-                using (FontHelper.UIFont160.Push())
+                using (FontManager.UIFont160.Push())
                     ImGuiOm.Text("Daily Routines");
 
-                ImGuiOm.Text("Help With Some Boring Tasks");
+                ImGui.TextColored(ImGuiColors.TankBlue, "Help With Some Boring Tasks");
             }
+
+            LogoDetailComponentSize = ImGui.GetItemRectSize();
         }
         
         ScaledDummy(1f);
@@ -389,7 +407,7 @@ public class Main : Window, IDisposable
         {
             using (ImRaii.Group())
             {
-                ImageCarousel.Draw();
+                ImageCarouselInstance.Draw();
 
                 ScaledDummy(1f, 4f);
                 DrawHomePage_GameCalendarsComponent();
@@ -420,7 +438,7 @@ public class Main : Window, IDisposable
             GreetingText = GetGreetingByTime();
         }
 
-        using (FontHelper.UIFont140.Push())
+        using (FontManager.UIFont140.Push())
         {
             var greetingObject = ImGui.CalcTextSize($"{GreetingPlace}, {GreetingName}");
             Vector2 size;
@@ -430,9 +448,9 @@ public class Main : Window, IDisposable
                 {
                     var greetingTextSize = ImGui.CalcTextSize(GreetingText);
                     ImGui.SetCursorPosX(greetingObject.X - greetingTextSize.X - ImGui.GetStyle().ItemSpacing.X);
-                    ImGui.Text(GreetingText);
+                    ImGui.TextColored(ImGuiColors.TankBlue, GreetingText);
 
-                    ImGui.Text($"{GreetingPlace}, {GreetingName}");
+                    ImGui.TextColored(ImGuiColors.DalamudWhite2, $"{GreetingPlace}, {GreetingName}");
                 }
 
                 size = ImGui.GetItemRectSize();
@@ -444,17 +462,17 @@ public class Main : Window, IDisposable
 
     private static void DrawHomePage_GameCalendarsComponent()
     {
-        if (MainSettings.GameCalendars is not { Count: > 0 }) return;
+        if (OnlineStatsManager.GameCalendars is not { Count: > 0 }) return;
 
-        using (FontHelper.UIFont80.Push())
+        using (FontManager.UIFont80.Push())
         {
-            ChildGameCalendarsSize.X = ImageCarousel.ChildSize.X;
+            ChildGameCalendarsSize.X = ImageCarouselInstance.ChildSize.X;
             float height;
             using (ImRaii.Child("HomePage_GameEvents", ChildGameCalendarsSize))
             {
                 using (ImRaii.Group())
                 {
-                    foreach (var activity in MainSettings.GameCalendars)
+                    foreach (var activity in OnlineStatsManager.GameCalendars)
                     {
                         if (Service.Config.IsHideOutdatedEvent && activity.State == 2) continue;
                         var statusStr = activity.State == 2 ? Service.Lang.GetText("GameCalendar-EventEnded") : "";
@@ -501,32 +519,32 @@ public class Main : Window, IDisposable
 
     private static void DrawHomePage_PluginInfoComponent()
     {
-        using (FontHelper.UIFont120.Push())
+        using (FontManager.UIFont120.Push())
         {
             using (ImRaii.Group())
             {
                 ImGui.TextColored(ImGuiColors.DalamudOrange, $"{Service.Lang.GetText("CurrentVersion")}:");
 
                 ImGui.SameLine();
-                ImGui.TextColored(Plugin.Version < MainSettings.LatestVersionInfo.Version ? ImGuiColors.DPSRed : ImGuiColors.DalamudWhite, $"{Plugin.Version}");
+                ImGui.TextColored(Plugin.Version < OnlineStatsManager.LatestVersion.Version ? ImGuiColors.DPSRed : ImGuiColors.DalamudWhite, $"{Plugin.Version}");
 
-                if (Plugin.Version < MainSettings.LatestVersionInfo.Version)
-                    ImGuiOm.TooltipHover(Service.Lang.GetText("LowVersionWarning"));
+                if (Plugin.Version < OnlineStatsManager.LatestVersion.Version)
+                    ImGuiOm.TooltipHover(Service.Lang.GetText("Settings-LowVersionWarning"));
 
                 ImGui.TextColored(ImGuiColors.DalamudOrange, $"{Service.Lang.GetText("LatestVersion")}:");
 
                 ImGui.SameLine();
-                ImGui.Text($"{MainSettings.LatestVersionInfo.Version}");
+                ImGui.Text($"{OnlineStatsManager.LatestVersion.Version}");
 
                 ImGui.TextColored(ImGuiColors.DalamudOrange, $"{Service.Lang.GetText("LatestDL")}:");
 
                 ImGui.SameLine();
-                ImGui.Text($"{MainSettings.LatestVersionInfo.DownloadCount}");
+                ImGui.Text($"{OnlineStatsManager.LatestVersion.DownloadCount}");
 
                 ImGui.TextColored(ImGuiColors.DalamudOrange, $"{Service.Lang.GetText("TotalDL")}:");
 
                 ImGui.SameLine();
-                ImGui.Text($"{MainSettings.TotalDownloadCounts}");
+                ImGui.Text($"{OnlineStatsManager.Downloads_Total}");
             }
         }
     }
@@ -541,14 +559,15 @@ public class Main : Window, IDisposable
             ImageHelper.TryGetImage("https://gh.atmoomen.top/DailyRoutines/main/Assets/Images/AfdianSponsor.jpg",
                                     out var imageWarpper1);
 
-        var childSize = ImageCarousel.CurrentImageSize + (ImGui.GetStyle().ItemSpacing * 2) + new Vector2(50f) * GlobalFontScale;
+        var childSize = ImageCarouselInstance.CurrentImageSize + (ImGui.GetStyle().ItemSpacing * 2) + ScaledVector2(50f);
         using (ImRaii.Child("HomePage_ChangelogComponent", childSize, false, ChildFlags | ImGuiWindowFlags.NoScrollWithMouse))
         {
             if (imageState0)
-                if (ImGui.CollapsingHeader(
-                        Service.Lang.GetText("Changelog", MainSettings.LatestVersionInfo.PublishTime.ToShortDateString())))
+            {
+                ImGui.SetNextItemWidth(200f * GlobalFontScale);
+                if (ImGui.CollapsingHeader(Service.Lang.GetText("Changelog", OnlineStatsManager.LatestVersion.PublishTime)))
                 {
-                    ImGui.Image(imageWarpper0.ImGuiHandle, ImageCarousel.CurrentImageSize);
+                    ImGui.Image(imageWarpper0.ImGuiHandle, ImageCarouselInstance.CurrentImageSize);
                     if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
                     if (ImGui.IsItemClicked()) ImGui.OpenPopup("ChangelogPopup");
 
@@ -556,13 +575,19 @@ public class Main : Window, IDisposable
                     if (popup.Success)
                         ImGui.Image(imageWarpper0.ImGuiHandle, imageWarpper0.Size * 0.8f);
                 }
+            }
 
             if (imageState1)
-                if (ImGui.CollapsingHeader($"{Service.Lang.GetText("Settings-AfdianSponsor")} (2024/05)"))
+            {
+                ImGui.SetNextItemWidth(200f * GlobalFontScale);
+                if (ImGui.CollapsingHeader($"{Service.Lang.GetText("Settings-AfdianSponsor")} ({OnlineStatsManager.Sponsor_Period})"))
                 {
-                    ImGui.Image(imageWarpper1.ImGuiHandle, ImageCarousel.CurrentImageSize
+                    ImGui.Image(imageWarpper1.ImGuiHandle, ImageCarouselInstance.CurrentImageSize
                                     with
-                                    { Y = ImageCarousel.CurrentImageSize.Y + (400f * GlobalFontScale) });
+                                    {
+                                        Y = ImageCarouselInstance.CurrentImageSize.Y + (400f * GlobalFontScale)
+                                    });
+
                     if (ImGui.IsItemHovered()) ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
                     if (ImGui.IsItemClicked()) ImGui.OpenPopup("SponsorPopup");
 
@@ -570,12 +595,13 @@ public class Main : Window, IDisposable
                     if (popup.Success)
                         ImGui.Image(imageWarpper1.ImGuiHandle, imageWarpper1.Size * 0.4f);
                 }
+            }
         }
     }
 
     private static void DrawModules(IReadOnlyList<ModuleInfo> modules, bool isFromSearch = false)
     {
-        using (FontHelper.GetUIFont(0.9f).Push())
+        using (FontManager.GetUIFont(0.9f).Push())
         {
             DrawModulesInternal(modules, isFromSearch);
         }
@@ -609,6 +635,14 @@ public class Main : Window, IDisposable
         {
             if (isModuleEnabled) Service.ModuleManager.Load(moduleInstance, true);
             else Service.ModuleManager.Unload(moduleInstance, true);
+
+            Task.Run(() =>
+            {
+                ModulesEnabled.Clear();
+                ModulesEnabled.AddRange(Modules.Where(
+                                            x => Service.Config.ModuleEnabled.TryGetValue(x.ModuleName, out var enabled) &&
+                                                 enabled));
+            });
         }
 
         if (ImGui.IsItemHovered())
@@ -656,9 +690,11 @@ public class Main : Window, IDisposable
 
         ScaledDummy(1f, 4f);
 
+        // 模块描述
         ImGui.SetCursorPosX(origCursorPosX);
         ImGuiOm.TextDisabledWrapped(moduleInfo.Description);
 
+        // 前置模块
         ImGui.SetCursorPosX(origCursorPosX);
         using (ImRaii.Group())
         {
@@ -671,6 +707,9 @@ public class Main : Window, IDisposable
 
                     ImGui.SameLine();
                     ImGui.TextColored(ImGuiColors.DalamudYellow, pModule);
+
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
 
                     if (ImGui.IsItemClicked())
                         SearchString = pModule;
@@ -704,12 +743,12 @@ public class Main : Window, IDisposable
     {
         using var popup = ImRaii.ContextPopupItem($"ContextMenu_{moduleInfo.Title}_{moduleInfo.Description}_{moduleInfo.Module.Name}");
         if (!popup.Success) return;
-        using (FontHelper.UIFont120.Push())
+        using (FontManager.UIFont120.Push())
         {
             ImGui.Text($"{moduleInfo.Title}");
         }
 
-        using (FontHelper.UIFont80.Push())
+        using (FontManager.UIFont80.Push())
         {
             ImGui.TextColored(ImGuiColors.DalamudOrange, $"{Service.Lang.GetText("Settings-ModuleInfoCategory")}:");
 
@@ -750,24 +789,30 @@ public class Main : Window, IDisposable
 
             if (moduleInfo.PrecedingModule != null)
             {
-                if (ImGui.Selectable($"    {Service.Lang.GetText("Settings-EnableAllPModules")}", isFavorite, ImGuiSelectableFlags.DontClosePopups))
+                if (ImGui.Selectable($"    {Service.Lang.GetText("Settings-EnableAllPModules")}", false, ImGuiSelectableFlags.DontClosePopups))
                 {
                     foreach (var pModuleType in moduleInfo.Module.GetCustomAttribute<PrecedingModuleAttribute>().Modules)
                         Service.ModuleManager.Load(pModuleType, true);
 
-                    ModulesFavorite.Clear();
-                    ModulesFavorite.AddRange(Modules.Where(x => Service.Config.ModuleFavorites.Contains(x.Module.Name)));
+                    Task.Run(() =>
+                    {
+                        ModulesFavorite.Clear();
+                        ModulesFavorite.AddRange(Modules.Where(x => Service.Config.ModuleFavorites.Contains(x.Module.Name)));
+                    });
                 }
 
                 ImGui.Separator();
 
-                if (ImGui.Selectable($"    {Service.Lang.GetText("Settings-DisableAllPModules")}", isFavorite, ImGuiSelectableFlags.DontClosePopups))
+                if (ImGui.Selectable($"    {Service.Lang.GetText("Settings-DisableAllPModules")}", false, ImGuiSelectableFlags.DontClosePopups))
                 {
                     foreach (var pModuleType in moduleInfo.Module.GetCustomAttribute<PrecedingModuleAttribute>().Modules)
                         Service.ModuleManager.Unload(pModuleType, true);
 
-                    ModulesFavorite.Clear();
-                    ModulesFavorite.AddRange(Modules.Where(x => Service.Config.ModuleFavorites.Contains(x.Module.Name)));
+                    Task.Run(() =>
+                    {
+                        ModulesFavorite.Clear();
+                        ModulesFavorite.AddRange(Modules.Where(x => Service.Config.ModuleFavorites.Contains(x.Module.Name)));
+                    });
                 }
 
                 ImGui.Separator();
@@ -812,48 +857,58 @@ public class Main : Window, IDisposable
             }
         }
     }
+
     #endregion
 
     private static void RefreshModuleInfo()
     {
-        ImageHelper.GetImage("https://gh.atmoomen.top/DailyRoutines/main/Assets/Images/icon.png");
-
-        var allModules = Assembly.GetExecutingAssembly().GetTypes()
-                                 .Where(t => typeof(DailyModuleBase).IsAssignableFrom(t) &&
-                                             t is { IsClass: true, IsAbstract: false })
-                                 .Select(type => new ModuleInfo
-                                 {
-                                     Module = type,
-                                     PrecedingModule = type.GetCustomAttribute<PrecedingModuleAttribute>()?.Modules
-                                                           .Select(t => t.Name + "Title")
-                                                           .Select(title => Service.Lang.GetText(title))
-                                                           .ToArray(),
-                                     ModuleName = type.Name,
-                                     Title = Service.Lang.GetText(
-                                         type.GetCustomAttribute<ModuleDescriptionAttribute>()?.TitleKey ??
-                                         "DevModuleTitle"),
-                                     Description = Service.Lang.GetText(
-                                         type.GetCustomAttribute<ModuleDescriptionAttribute>()?.DescriptionKey ??
-                                         "DevModuleDescription"),
-                                     Category = type.GetCustomAttribute<ModuleDescriptionAttribute>()?.Category ??
-                                                ModuleCategories.一般,
-                                     Author = ((DailyModuleBase)Activator.CreateInstance(type)!).Author,
-                                     WithConfigUI = type
-                                                    .GetMethods(BindingFlags.Instance | BindingFlags.Public |
-                                                                BindingFlags.DeclaredOnly)
-                                                    .Any(m => m.Name == "ConfigUI" &&
-                                                              m.DeclaringType != typeof(DailyModuleBase)),
-                                     WithConfig = File.Exists(Path.Join(Service.PluginInterface.ConfigDirectory.FullName, $"{type.Name}.json")),
-                                 })
-                                 .ToList();
-
-        Modules.AddRange(allModules);
-        allModules.GroupBy(m => m.Category).ToList().ForEach(group =>
+        Task.Run(() =>
         {
-            categorizedModules[group.Key] =
-                [.. group.OrderBy(m => m.Title)];
+            var allModules = Assembly.GetExecutingAssembly().GetTypes()
+                                     .Where(t => typeof(DailyModuleBase).IsAssignableFrom(t) &&
+                                                 t is { IsClass: true, IsAbstract: false } &&
+                                                 t.GetCustomAttribute<ModuleDescriptionAttribute>() != null)
+                                     .Select(t => new ModuleInfo
+                                     {
+                                         Module = t,
+                                         PrecedingModule = t.GetCustomAttribute<PrecedingModuleAttribute>()?.Modules
+                                                               .Select(type => 
+                                                                           Service.Lang.GetText(type.GetCustomAttribute<ModuleDescriptionAttribute>()?.TitleKey ??
+                                                                           "DevModuleTitle"))
+                                                               .ToArray(),
+                                         ModuleName = t.Name,
+                                         Title = Service.Lang.GetText(
+                                             t.GetCustomAttribute<ModuleDescriptionAttribute>()?.TitleKey ??
+                                             "DevModuleTitle"),
+                                         Description = Service.Lang.GetText(
+                                             t.GetCustomAttribute<ModuleDescriptionAttribute>()?.DescriptionKey ??
+                                             "DevModuleDescription"),
+                                         Category = t.GetCustomAttribute<ModuleDescriptionAttribute>()?.Category ??
+                                                    ModuleCategories.一般,
+                                         Author = t.GetCustomAttribute<ModuleDescriptionAttribute>()?.Author,
+                                         WithConfigUI = t.GetMethods(BindingFlags.Instance | BindingFlags.Public |
+                                                                     BindingFlags.DeclaredOnly)
+                                                         .Any(m => m.Name == "ConfigUI" &&
+                                                                   m.DeclaringType != typeof(DailyModuleBase)),
+                                         WithConfig = File.Exists(
+                                             Path.Join(Service.PluginInterface.ConfigDirectory.FullName, $"{t.Name}.json")),
+                                     })
+                                     .ToList();
+
+            Modules.AddRange(allModules);
+            allModules.GroupBy(m => m.Category).ToList().ForEach(group =>
+            {
+                categorizedModules[group.Key] =
+                    [.. group.OrderBy(m => m.Title)];
+            });
+
+            ModulesFavorite.Clear();
+            ModulesFavorite.AddRange(allModules.Where(x => Service.Config.ModuleFavorites.Contains(x.Module.Name)));
+            ModulesEnabled.Clear();
+            ModulesEnabled.AddRange(allModules.Where(
+                                        x => Service.Config.ModuleEnabled.TryGetValue(x.ModuleName, out var enabled) &&
+                                             enabled));
         });
-        ModulesFavorite.AddRange(allModules.Where(x => Service.Config.ModuleFavorites.Contains(x.Module.Name)));
     }
 
     private static string GetGreetingByTime()
@@ -871,469 +926,478 @@ public class Main : Window, IDisposable
         };
     }
 
-    public void Dispose()
+    public void Dispose() { }
+
+    public class ImageCarousel
     {
-        MainSettings.Uninit();
-        Service.Config.Save();
-    }
-}
+        private readonly List<GameNews> news = [];
+        private int currentIndex;
+        private float lastChangeTime;
+        private Vector2 imageSize = ScaledVector2(450f, 240f);
+        private Vector2 childSize;
+        private Vector2 textSize;
+        private bool isHovered;
+        private bool isDragging;
+        private float dragStartPos;
+        private float currentOffset;
+        private float targetOffset;
 
-public class MainSettings
-{
-    public class VersionInfo
-    {
-        public Version  Version       { get; set; } = new();
-        public DateTime PublishTime   { get; set; } = DateTime.MinValue;
-        public string   Changelog     { get; set; } = string.Empty;
-        public int      DownloadCount { get; set; }
-    }
-
-    public class GameEvent
-    {
-        public uint                ID            { get; set; }
-        public DalamudLinkPayload? LinkPayload   { get; set; }
-        public uint                LinkPayloadID { get; set; }
-        public string              Name          { get; set; } = string.Empty;
-        public string              Url           { get; set; } = string.Empty;
-        public DateTime            BeginTime     { get; set; } = DateTime.MinValue;
-        public DateTime            EndTime       { get; set; } = DateTime.MaxValue;
-        public Vector4             Color         { get; set; }
-
-        /// <summary>
-        ///     0 - 正在进行; 1 - 未开始; 2 - 已结束
-        /// </summary>
-        public uint State { get; set; }
-
-        /// <summary>
-        ///     如果已结束, 则为 -1
-        /// </summary>
-        public int DaysLeft { get; set; } = int.MaxValue;
-    }
-
-    public class GameNews
-    {
-        public string Title         { get; set; } = string.Empty;
-        public string Url           { get; set; } = string.Empty;
-        public string PublishDate   { get; set; } = string.Empty;
-        public string Summary       { get; set; } = string.Empty;
-        public string HomeImagePath { get; set; } = string.Empty;
-        public int    SortIndex     { get; set; }
-    }
-
-    internal static string ConflictKeySearchString = string.Empty;
-    internal static readonly HttpClient client = new();
-    internal static int TotalDownloadCounts;
-    internal static VersionInfo LatestVersionInfo = new();
-    internal static List<GameEvent> GameCalendars = [];
-    internal static readonly List<GameNews> GameNewsList = [];
-
-    internal static Dictionary<int, string> PagesInfo = new()
-    {
-        { 0, "主页" },
-        { 1, "设置" },
-        { 3, "收藏" },
-    };
-
-    internal static void Init()
-    {
-        ObtainNecessityInfo();
-        Service.ClientState.Login += OnLogin;
-    }
-
-    internal static void Draw()
-    {
-        DrawGlobalConfig();
-
-        ImGui.Separator();
-
-        DrawTooltips();
-    }
-
-    internal static void DrawGlobalConfig()
-    {
-        // 语言
-        ImGuiOm.TextIcon(FontAwesomeIcon.Globe, Service.Lang.GetText("Language"));
-
-        ImGui.SameLine();
-        ImGui.BeginDisabled();
-        ImGui.SetNextItemWidth(180f * GlobalFontScale);
-        using (ImRaii.Combo("##LanguagesList", "简体中文")) { }
-        ImGui.EndDisabled();
-
-        ImGui.Spacing();
-
-        // 模块配置
-        ImGuiOm.TextIcon(FontAwesomeIcon.FolderOpen, Service.Lang.GetText("ModulesConfig"));
-
-        ImGui.SameLine();
-        if (ImGui.Button(Service.Lang.GetText("OpenFolder")))
-            OpenFileOrFolder(Service.PluginInterface.ConfigDirectory.FullName);
-
-        ImGuiOm.TooltipHover(Service.Lang.GetText("ModulesConfigHelp"));
-
-        ImGui.Spacing();
-
-        // 打断热键
-        ImGuiOm.TextIcon(FontAwesomeIcon.Keyboard, Service.Lang.GetText("ConflictKey"));
-
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(150f * GlobalFontScale);
-        using (var combo = ImRaii.Combo("##GlobalConflictHotkey", Service.Config.ConflictKey.ToString()))
+        public float ChangeInterval { get; set; } = 8.0f;
+        public Vector2 CurrentImageSize
         {
-            if (combo.Success)
+            get => imageSize;
+            set
             {
-                ImGui.SetNextItemWidth(-1f);
-                ImGui.InputTextWithHint("##ConflictKeySearchBar", $"{Service.Lang.GetText("PleaseSearch")}...",
-                                        ref ConflictKeySearchString, 20);
+                imageSize = value;
+                UpdateChildSize();
+            }
+        }
+        public Vector2 ChildSize => childSize;
 
-                ImGui.Separator();
+        public ImageCarousel() { }
 
-                var validKeys = Service.KeyState.GetValidVirtualKeys();
-                foreach (var keyToSelect in validKeys)
+        public ImageCarousel(IEnumerable<GameNews> newsList)
+        {
+            AddNews(newsList);
+        }
+
+        public void AddNews(IEnumerable<GameNews> newsList)
+        {
+            news.AddRange(newsList);
+            UpdateChildSize();
+        }
+
+        public void ClearNews()
+        {
+            news.Clear();
+            currentIndex = 0;
+            currentOffset = 0;
+            targetOffset = 0;
+            UpdateChildSize();
+        }
+
+        private void UpdateChildSize()
+        {
+            var style = ImGui.GetStyle();
+            imageSize = ScaledVector2(450f, 240f);
+            childSize = new(
+                imageSize.X + (2 * style.ItemSpacing.X),
+                imageSize.Y + textSize.Y + style.ItemSpacing.Y
+            );
+        }
+
+        private void UpdateCarouselState()
+        {
+            var currentTime = (float)ImGui.GetTime();
+            if (currentTime - lastChangeTime > ChangeInterval && !isDragging && !isHovered)
+            {
+                currentIndex = (currentIndex + 1) % news.Count;
+                targetOffset = -currentIndex * imageSize.X;
+                lastChangeTime = currentTime;
+            }
+
+            currentOffset = Lerp(currentOffset, targetOffset, ImGui.GetIO().DeltaTime * 5f);
+
+            var minOffset = -(news.Count - 1) * imageSize.X;
+            currentOffset = Math.Clamp(currentOffset, minOffset, 0);
+        }
+
+        private void HandleInput()
+        {
+            if (ImGui.IsItemHovered())
+            {
+                isHovered = true;
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+
+                if (ImGui.IsMouseDown(ImGuiMouseButton.Left))
                 {
-                    if (!string.IsNullOrWhiteSpace(ConflictKeySearchString) && !keyToSelect.GetFancyName()
-                            .Contains(ConflictKeySearchString, StringComparison.OrdinalIgnoreCase)) continue;
-
-                    if (ImGui.Selectable(keyToSelect.GetFancyName()))
+                    if (!isDragging)
                     {
-                        Service.Config.ConflictKey = keyToSelect;
-                        Service.Config.Save();
+                        isDragging = true;
+                        dragStartPos = ImGui.GetMousePos().X - currentOffset;
                     }
+                    var newOffset = ImGui.GetMousePos().X - dragStartPos;
+                    currentOffset = newOffset;
+                    targetOffset = newOffset;
+                    lastChangeTime = (float)ImGui.GetTime();
                 }
-            }
-        }
-        ImGuiOm.TooltipHover(Service.Lang.GetText("ConflictKeyHelp"));
-
-        ImGui.Spacing();
-
-        // 匿名数据上传
-        ImGuiOm.TextIcon(FontAwesomeIcon.Database, Service.Lang.GetText("Settings-AllowAnonymousUpload"));
-
-        ImGui.SameLine();
-        var allowState = Service.Config.AllowAnonymousUpload;
-        if (ImGui.Checkbox("###AllowAnonymousUpload", ref allowState))
-        {
-            Service.Config.AllowAnonymousUpload ^= true;
-            Service.Config.Save();
-
-            if (Service.Config.AllowAnonymousUpload)
-            {
-                Task.Run(async () =>
-                             await OnlineStatsManager.UploadEntry(
-                                 new OnlineStatsManager.ModulesState(OnlineStatsManager.GetEncryptedMachineCode())));
-            }
-        }
-        ImGuiOm.TooltipHover(Service.Lang.GetText("Settings-AllowAnonymousUploadHelp"), 25f);
-
-        // 游戏活动日历
-        ImGuiOm.TextIcon(FontAwesomeIcon.Calendar, Service.Lang.GetText("Settings-SendCalendarToCharWhenLogin"));
-
-        ImGui.SameLine();
-        var checkboxBool = Service.Config.SendCalendarToChatWhenLogin;
-        if (ImGui.Checkbox("###SendCalendarToCharWhenLogin", ref checkboxBool))
-        {
-            Service.Config.SendCalendarToChatWhenLogin ^= true;
-            Service.Config.Save();
-        }
-
-        ImGuiOm.TextIcon(FontAwesomeIcon.CalendarAlt, Service.Lang.GetText("Settings-HideOutdatedEvents"));
-        
-        ImGui.SameLine();
-        var checkboxBool2 = Service.Config.IsHideOutdatedEvent;
-        if (ImGui.Checkbox("###HideOutdatedEvents", ref checkboxBool2))
-        {
-            Service.Config.IsHideOutdatedEvent ^= true;
-            Service.Config.Save();
-        }
-
-        // 启用 TTS
-        ImGuiOm.TextIcon(FontAwesomeIcon.Microphone, Service.Lang.GetText("Settings-EnableTTS"));
-
-        ImGui.SameLine();
-        var enableTTS = Service.Config.EnableTTS;
-        ImGui.SetNextItemWidth(150f * GlobalFontScale);
-        if (ImGui.Checkbox("###EnableTTS", ref enableTTS))
-        {
-            Service.Config.EnableTTS = enableTTS;
-            Service.Config.Save();
-        }
-
-        // 界面文本字号
-        ImGuiOm.TextIcon(FontAwesomeIcon.Font, Service.Lang.GetText("Settings-InterfaceFontSize"));
-
-        ImGui.SameLine();
-        var fontTemp = Service.Config.InterfaceFontSize;
-        ImGui.SetNextItemWidth(150f * GlobalFontScale);
-        if (ImGui.InputFloat("###InterfaceFontInput", ref fontTemp, 0, 0, "%.1f"))
-            fontTemp = Math.Clamp(fontTemp, 8, 48);
-        if (ImGui.IsItemDeactivatedAfterEdit())
-        {
-            Service.Config.InterfaceFontSize = fontTemp;
-            Service.Config.Save();
-
-            RebuildInterfaceFont();
-        }
-
-        // 默认页面
-        ImGuiOm.TextIcon(FontAwesomeIcon.Home, Service.Lang.GetText("Settings-DefaultHomePage"));
-
-        ImGui.SameLine();
-        var defaultHomePage = Service.Config.DefaultHomePage;
-        var previewString = defaultHomePage > 100 ? 
-                                ((ModuleCategories)(defaultHomePage % 100)).ToString() : 
-                                PagesInfo[defaultHomePage];
-
-        ImGui.SetNextItemWidth(150f * GlobalFontScale);
-        using (var combo = ImRaii.Combo("###DefaultHomePageSelectCombo", previewString))
-        {
-            if (combo.Success)
-            {
-                foreach (var buttonInfo in PagesInfo)
+                else
                 {
-                    if (ImGuiOm.Selectable(buttonInfo.Value))
-                    {
-                        Service.Config.DefaultHomePage = buttonInfo.Key;
-                        Service.Config.Save();
-                    }
+                    isDragging = false;
                 }
 
-                foreach (var buttonInfo in Enum.GetValues<ModuleCategories>())
+                var wheel = ImGui.GetIO().MouseWheel;
+                if (wheel != 0)
                 {
-                    if (buttonInfo == ModuleCategories.无) continue;
-
-                    if (ImGuiOm.Selectable(buttonInfo.ToString()))
-                    {
-                        Service.Config.DefaultHomePage = (int)buttonInfo + 100;
-                        Service.Config.Save();
-                    }
+                    currentIndex = Math.Clamp(currentIndex - Math.Sign(wheel), 0, news.Count - 1);
+                    targetOffset = -currentIndex * imageSize.X;
+                    lastChangeTime = (float)ImGui.GetTime();
                 }
-            }
-        }
-    }
-
-    internal static void DrawTooltips()
-    {
-        ImGui.TextColored(ImGuiColors.DalamudYellow, $"{Service.Lang.GetText("Settings-TipMessage0")}:");
-        ImGui.TextWrapped(Service.Lang.GetText("Settings-TipMessage1"));
-        ImGui.TextWrapped(Service.Lang.GetText("Settings-TipMessage2"));
-    }
-
-    internal static void ObtainNecessityInfo()
-    {
-        Task.Run(async () =>
-        {
-            ImageHelper.GetImage("https://gh.atmoomen.top/DailyRoutines/main/Assets/Images/Changelog.png");
-            ImageHelper.GetImage("https://gh.atmoomen.top/DailyRoutines/main/Assets/Images/AfdianSponsor.jpg");
-            await GetGameCalendar();
-            await GetGameNews();
-            TotalDownloadCounts = await GetTotalDownloadsAsync();
-            LatestVersionInfo = await GetLatestVersionAsync("AtmoOmen", "DailyRoutines");
-
-            RebuildInterfaceFont();
-        });
-    }
-
-    internal static void RebuildInterfaceFont()
-    {
-        FontHelper.GetUIFont(0.9f);
-        for (var i = 0.6f; i < 1.8f; i += 0.2f)
-            FontHelper.GetUIFont(i);
-    }
-
-    private static void OnLogin()
-    {
-        if (!Service.Config.SendCalendarToChatWhenLogin) return;
-        if (GameCalendars.Any(x => x.BeginTime <= DateTime.Now && DateTime.Now <= x.EndTime))
-        {
-            Service.Chat.Print(new SeStringBuilder()
-                               .AddUiForeground("[Daily Routines]", 34)
-                               .AddUiForeground(
-                                   $" {DateTime.Now.ToShortDateString()} {Service.Lang.GetText("GameCalendar")}", 2)
-                               .Build());
-
-            var orderNumber = 1;
-            foreach (var gameEvent in GameCalendars)
-            {
-                if (gameEvent.State != 0) continue;
-                var message = new SeStringBuilder().AddUiForeground($"{orderNumber}. ", 2)
-                                                   .Add(gameEvent.LinkPayload)
-                                                   .AddUiForeground($"{gameEvent.Name}", 25)
-                                                   .Add(RawPayload.LinkTerminator)
-                                                   .AddUiForeground(
-                                                       $" ({Service.Lang.GetText("GameCalendar-EndTimeMessage",
-                                                                                 gameEvent.DaysLeft)})", 2)
-                                                   .Build();
-
-                Service.Chat.Print(message);
-                orderNumber++;
-            }
-        }
-    }
-
-    internal static async Task<int> GetTotalDownloadsAsync()
-    {
-        const string url = "https://gh.atmoomen.top/DailyRoutines/main/Assets/downloads.txt";
-        var response = await client.GetStringAsync(url);
-        return int.TryParse(response, out var totalDownloads) ? totalDownloads : 0;
-    }
-
-    internal static async Task<VersionInfo> GetLatestVersionAsync(string userName, string repoName)
-    {
-        var url = $"https://api.github.com/repos/{userName}/{repoName}/releases/latest";
-        client.DefaultRequestHeaders.UserAgent.TryParseAdd("request");
-        var response = await client.GetStringAsync(url);
-        var latestRelease = JsonConvert.DeserializeObject<FileFormat.GitHubRelease>(response);
-
-        var totalDownloads = 0;
-        var version = new VersionInfo();
-        foreach (var asset in latestRelease.assets) totalDownloads += asset.download_count * 2;
-
-        version.Version = new Version(latestRelease.tag_name);
-        version.PublishTime = latestRelease.published_at;
-        version.Changelog = MarkdownToPlainText(latestRelease.body);
-        version.DownloadCount = totalDownloads;
-
-        ImageHelper.GetImage("https://gh.atmoomen.top/DailyRoutines/main/Assets/Images/Changelog.png");
-
-        return version;
-    }
-
-    internal static async Task GetGameCalendar()
-    {
-        const string url = "https://apiff14risingstones.web.sdo.com/api/home/active/calendar/getActiveCalendarMonth";
-        var response = await client.GetStringAsync(url);
-        var result = JsonConvert.DeserializeObject<FileFormat.RSActivityCalendar>(response);
-
-        if (result.data.Count > 0)
-        {
-            foreach (var activity in GameCalendars)
-                Service.LinkPayloadManager.Unregister(activity.LinkPayloadID);
-            GameCalendars.Clear();
-
-            foreach (var activity in result.data)
-            {
-                var currentTime = DateTime.Now;
-                var beginTime = UnixSecondToDateTime(activity.begin_time);
-                var endTime = UnixSecondToDateTime(activity.end_time);
-                var gameEvent = new GameEvent
-                {
-                    ID = activity.id,
-                    LinkPayload = Service.LinkPayloadManager.Register(OpenGameEventLinkPayload, out var linkPayloadID),
-                    LinkPayloadID = linkPayloadID,
-                    Name = activity.name,
-                    Url = activity.url,
-                    BeginTime = beginTime,
-                    EndTime = endTime,
-                    Color = DarkenColor(HexToVector4(activity.color), 0.3f),
-                    State = currentTime < beginTime ? 1U :
-                            currentTime <= endTime ? 0U : 2U,
-                    DaysLeft = currentTime < beginTime ? (beginTime - DateTime.Now).Days :
-                               currentTime <= endTime ? (endTime - DateTime.Now).Days : int.MaxValue,
-                };
-
-                GameCalendars.Add(gameEvent);
-            }
-
-            GameCalendars = [..GameCalendars.OrderBy(x => x.DaysLeft)];
-        }
-    }
-
-    internal static void OpenGameEventLinkPayload(uint commandID, SeString message)
-    {
-        var link = GameCalendars.FirstOrDefault(x => x.LinkPayloadID == commandID)?.Url;
-        if (!string.IsNullOrWhiteSpace(link))
-            Util.OpenLink(link);
-    }
-
-    internal static async Task GetGameNews()
-    {
-        const string url =
-            "https://cqnews.web.sdo.com/api/news/newsList?gameCode=ff&CategoryCode=5309,5310,5311,5312,5313&pageIndex=0&pageSize=5";
-
-        var response = await client.GetStringAsync(url);
-        var result = JsonConvert.DeserializeObject<FileFormat.RSGameNews>(response);
-
-        if (result.Data.Count > 0)
-        {
-            GameNewsList.Clear();
-            foreach (var activity in result.Data)
-            {
-                var gameNews = new GameNews
-                {
-                    Title = activity.Title,
-                    Url = activity.Author,
-                    SortIndex = activity.SortIndex,
-                    Summary = activity.Summary,
-                    HomeImagePath = activity.HomeImagePath,
-                    PublishDate = activity.PublishDate,
-                };
-
-                GameNewsList.Add(gameNews);
-                ImageHelper.GetImage(activity.HomeImagePath);
-            }
-
-            Main.ImageCarousel = new(GameNewsList);
-        }
-    }
-
-    public static void Uninit()
-    {
-        Service.ClientState.Login -= OnLogin;
-        foreach (var gameEvent in GameCalendars)
-            Service.PluginInterface.RemoveChatLinkHandler(gameEvent.ID);
-    }
-}
-
-public class ImageCarousel(IReadOnlyList<MainSettings.GameNews> newsList)
-{
-    public IReadOnlyList<MainSettings.GameNews> News           { get; set; } = newsList;
-    public float                                ChangeInterval { get; set; } = 5.0f;
-    public Vector2                              ChildSize      { get; set; }
-
-    public readonly Vector2 CurrentImageSize = ScaledVector2(375, 200);
-
-    private int currentIndex;
-    private long lastImageChangeTime;
-
-    private void PreDraw()
-    {
-        if (Environment.TickCount64 - lastImageChangeTime > ChangeInterval * 1000)
-        {
-            currentIndex = (currentIndex + 1) % News.Count;
-            lastImageChangeTime = Environment.TickCount64;
-        }
-
-        var singleCharSize = ImGui.CalcTextSize("测");
-        var itemSpacing = ImGui.GetStyle().ItemSpacing;
-        ChildSize = new Vector2(CurrentImageSize.X + (2 * itemSpacing.X), CurrentImageSize.Y + (singleCharSize.Y * 2.5f));
-    }
-
-    public void Draw()
-    {
-        if (News.Count == 0) return;
-        PreDraw();
-
-        using (ImRaii.Child("NewsImageCarousel", ChildSize, false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
-        {
-            var news = News[currentIndex];
-            if (ImageHelper.TryGetImage(news.HomeImagePath, out var imageHandle))
-            {
-                ImGui.Image(imageHandle.ImGuiHandle, CurrentImageSize);
             }
             else
             {
-                ImGui.Dummy(CurrentImageSize);
+                isHovered = false;
+                isDragging = false;
             }
 
-            if (ImGui.IsItemHovered())
-                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
-
             if (ImGui.IsItemClicked())
-                Util.OpenLink(news.Url);
+            {
+                Util.OpenLink(news[currentIndex].Url);
+            }
+        }
 
-            ImGui.Indent(2f * GlobalFontScale);
-            ImGui.TextWrapped(news.Title);
-            ImGui.Unindent(2f * GlobalFontScale);
+        private void DrawCarousel()
+        {
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+
+            using (ImRaii.Child("CarouselImages", new Vector2(imageSize.X, imageSize.Y), false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+            {
+                for (var i = 0; i < news.Count; i++)
+                {
+                    var xPos = (i * imageSize.X) + currentOffset;
+
+                    ImGui.SetCursorPosX(xPos);
+
+                    if (ImageHelper.TryGetImage(news[i].HomeImagePath, out var imageHandle))
+                    {
+                        ImGui.Image(imageHandle.ImGuiHandle, imageSize);
+                    }
+                    else
+                    {
+                        ImGui.Dummy(imageSize);
+                    }
+
+                    if (i < news.Count - 1)
+                    {
+                        ImGui.SameLine();
+                    }
+                }
+            }
+
+            ImGui.PopStyleVar();
+        }
+
+        private void DrawTitle()
+        {
+            var style = ImGui.GetStyle();
+            ImGui.SetCursorPosY(imageSize.Y + style.ItemSpacing.Y);
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + childSize.X - style.ItemSpacing.X);
+            var titleIndex = Math.Abs((int)Math.Round(currentOffset / imageSize.X)) % news.Count;
+
+            using (ImRaii.Group())
+            {
+                ImGui.TextWrapped(news[titleIndex].Title);
+            }
+
+            var itemSize = ImGui.GetItemRectSize();
+            var singleLineHeight = ImGui.GetTextLineHeight();
+            var lineCount = (int)Math.Ceiling(itemSize.Y / singleLineHeight);
+            var neededLineCount = Math.Max(lineCount + 1, 3);
+            textSize.Y = neededLineCount * (singleLineHeight + style.ItemSpacing.Y);
+
+            // 计算行数
+
+            ImGui.PopTextWrapPos();
+        }
+
+        private void DrawNavigationDots()
+        {
+            var totalWidth = (news.Count * 10f) + ((news.Count - 1) * 5f);
+            ImGui.SetCursorPosX((childSize.X - totalWidth) * 0.5f);
+            ImGui.SetCursorPosY(childSize.Y - (16f * GlobalFontScale));
+
+            for (var i = 0; i < news.Count; i++)
+            {
+                if (i > 0) ImGui.SameLine(0, 5);
+                ImGui.PushStyleColor(ImGuiCol.Button, i == currentIndex ? 0xFFFFFFFF : 0x88FFFFFF);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, 0xFFFFFFFF);
+                ImGui.PushStyleColor(ImGuiCol.ButtonActive, 0xFFFFFFFF);
+                if (ImGui.Button($"##{i}", new Vector2(10, 10)))
+                {
+                    currentIndex = i;
+                    targetOffset = -i * imageSize.X;
+                }
+                ImGui.PopStyleColor(3);
+            }
+        }
+
+        public void Draw()
+        {
+            if (news.Count == 0) return;
+
+            UpdateCarouselState();
+
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+            using (ImRaii.Child("NewsImageCarousel", childSize, false, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+            {
+                DrawCarousel();
+                HandleInput();
+                DrawTitle();
+                DrawNavigationDots();
+            }
+            ImGui.PopStyleVar();
+
+            UpdateChildSize();
+        }
+
+        private static float Lerp(float a, float b, float t) => a + ((b - a) * t);
+    }
+
+    public class ModuleInfo
+    {
+        public Type             Module          { get; set; } = null!;
+        public string[]?        PrecedingModule { get; set; }
+        public string           ModuleName      { get; set; } = null!;
+        public string           Title           { get; set; } = null!;
+        public string           Description     { get; set; } = null!;
+        public string?          Author          { get; set; }
+        public bool             WithConfigUI    { get; set; }
+        public bool             WithConfig      { get; set; }
+        public ModuleCategories Category        { get; set; }
+    }
+
+    public class Settings
+    {
+        private static readonly Dictionary<int, string> PagesInfo = new()
+    {
+        { 0, "主页"   },
+        { 1, "设置"   },
+        { 3, "收藏"   },
+        { 4, "已启用" },
+    };
+
+        private static string ConflictKeySearchString = string.Empty;
+        private static string FontSearchString = string.Empty;
+
+        internal static void Draw()
+        {
+            DrawGlobalConfig();
+
+            ImGui.Separator();
+
+            DrawTooltips();
+        }
+
+        internal static void DrawGlobalConfig()
+        {
+            // 语言
+            ImGuiOm.TextIcon(FontAwesomeIcon.Globe, Service.Lang.GetText("Language"));
+
+            ImGui.SameLine();
+            ImGui.BeginDisabled();
+            ImGui.SetNextItemWidth(180f * GlobalFontScale);
+            using (ImRaii.Combo("##LanguagesList", "简体中文")) { }
+            ImGui.EndDisabled();
+
+            ImGui.Spacing();
+
+            // 模块配置
+            ImGuiOm.TextIcon(FontAwesomeIcon.FolderOpen, Service.Lang.GetText("ModulesConfig"));
+
+            ImGui.SameLine();
+            if (ImGui.Button(Service.Lang.GetText("OpenFolder")))
+                OpenFileOrFolder(Service.PluginInterface.ConfigDirectory.FullName);
+
+            ImGuiOm.TooltipHover(Service.Lang.GetText("ModulesConfigHelp"));
+
+            ImGui.Spacing();
+
+            // 打断热键
+            ImGuiOm.TextIcon(FontAwesomeIcon.Keyboard, Service.Lang.GetText("ConflictKey"));
+
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(150f * GlobalFontScale);
+            using (var combo = ImRaii.Combo("##GlobalConflictHotkey", Service.Config.ConflictKey.ToString()))
+            {
+                if (combo.Success)
+                {
+                    ImGui.SetNextItemWidth(-1f);
+                    ImGui.InputTextWithHint("##ConflictKeySearchBar", $"{Service.Lang.GetText("PleaseSearch")}...",
+                                            ref ConflictKeySearchString, 20);
+
+                    ImGui.Separator();
+
+                    var validKeys = Service.KeyState.GetValidVirtualKeys();
+                    foreach (var keyToSelect in validKeys)
+                    {
+                        if (!string.IsNullOrWhiteSpace(ConflictKeySearchString) && !keyToSelect.GetFancyName()
+                                .Contains(ConflictKeySearchString, StringComparison.OrdinalIgnoreCase)) continue;
+
+                        if (ImGui.Selectable(keyToSelect.GetFancyName()))
+                        {
+                            Service.Config.ConflictKey = keyToSelect;
+                            Service.Config.Save();
+                        }
+                    }
+                }
+            }
+            ImGuiOm.TooltipHover(Service.Lang.GetText("ConflictKeyHelp"));
+
+            ImGui.Spacing();
+
+            // 匿名数据上传
+            ImGuiOm.TextIcon(FontAwesomeIcon.Database, Service.Lang.GetText("Settings-AllowAnonymousUpload"));
+
+            ImGui.SameLine();
+            var allowState = Service.Config.AllowAnonymousUpload;
+            if (ImGui.Checkbox("###AllowAnonymousUpload", ref allowState))
+            {
+                Service.Config.AllowAnonymousUpload ^= true;
+                Service.Config.Save();
+
+                if (Service.Config.AllowAnonymousUpload)
+                {
+                    Task.Run(async () =>
+                                 await OnlineStatsManager.UploadEntry(new ModuleStat(OnlineStatsManager.GetEncryptedMachineCode())));
+                }
+            }
+            ImGuiOm.TooltipHover(Service.Lang.GetText("Settings-AllowAnonymousUploadHelp"), 25f);
+
+            // 游戏活动日历
+            ImGuiOm.TextIcon(FontAwesomeIcon.Calendar, Service.Lang.GetText("Settings-SendCalendarToCharWhenLogin"));
+
+            ImGui.SameLine();
+            var checkboxBool = Service.Config.SendCalendarToChatWhenLogin;
+            if (ImGui.Checkbox("###SendCalendarToCharWhenLogin", ref checkboxBool))
+            {
+                Service.Config.SendCalendarToChatWhenLogin ^= true;
+                Service.Config.Save();
+            }
+
+            ImGuiOm.TextIcon(FontAwesomeIcon.CalendarAlt, Service.Lang.GetText("Settings-HideOutdatedEvents"));
+
+            ImGui.SameLine();
+            var checkboxBool2 = Service.Config.IsHideOutdatedEvent;
+            if (ImGui.Checkbox("###HideOutdatedEvents", ref checkboxBool2))
+            {
+                Service.Config.IsHideOutdatedEvent ^= true;
+                Service.Config.Save();
+            }
+
+            // 启用 TTS
+            ImGuiOm.TextIcon(FontAwesomeIcon.Microphone, Service.Lang.GetText("Settings-EnableTTS"));
+
+            ImGui.SameLine();
+            var enableTTS = Service.Config.EnableTTS;
+            ImGui.SetNextItemWidth(150f * GlobalFontScale);
+            if (ImGui.Checkbox("###EnableTTS", ref enableTTS))
+            {
+                Service.Config.EnableTTS = enableTTS;
+                Service.Config.Save();
+            }
+
+            // 界面文本字号
+            ImGuiOm.TextIcon(FontAwesomeIcon.Font, Service.Lang.GetText("Settings-InterfaceFontSize"));
+
+            ImGui.SameLine();
+            var fontTemp = Service.Config.InterfaceFontSize;
+            ImGui.SetNextItemWidth(150f * GlobalFontScale);
+            if (ImGui.InputFloat("###InterfaceFontInput", ref fontTemp, 0, 0, "%.1f"))
+                fontTemp = Math.Clamp(fontTemp, 8, 48);
+            if (ImGui.IsItemDeactivatedAfterEdit())
+            {
+                Service.Config.InterfaceFontSize = fontTemp;
+                Service.Config.Save();
+
+                FontManager.RebuildInterfaceFonts();
+            }
+
+            // 界面字体选择
+            ImGuiOm.TextIcon(FontAwesomeIcon.Italic, Service.Lang.GetText("Settings-FontSelect"));
+
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(300f * GlobalFontScale);
+            using (var combo = ImRaii.Combo("###FontSelectCombo",
+                                FontManager.InstalledFonts.GetValueOrDefault(Service.Config.InterfaceFontFileName,
+                                                                             Service.Lang.GetText("Settings-UnknownFont")),
+                                ImGuiComboFlags.HeightLarge))
+            {
+                if (combo.Success)
+                {
+                    using (FontManager.UIFont120.Push())
+                    {
+                        ImGui.InputTextWithHint("###FontSearch", Service.Lang.GetText("PleaseSearch"), ref FontSearchString, 128);
+                        var inputWidth = ImGui.GetItemRectSize().X;
+                        ImGui.Separator();
+
+                        using (ImRaii.Child("FontChild", new(inputWidth, 400f * GlobalFontScale)))
+                        {
+                            foreach (var installedFont in FontManager.InstalledFonts)
+                            {
+                                if (!string.IsNullOrWhiteSpace(FontSearchString) &&
+                                    !installedFont.Key.Contains(FontSearchString, StringComparison.OrdinalIgnoreCase) &&
+                                    !installedFont.Value.Contains(FontSearchString, StringComparison.OrdinalIgnoreCase)) continue;
+
+                                if (ImGui.Selectable($"{installedFont.Value}##{installedFont.Key}"))
+                                {
+                                    Service.Config.InterfaceFontFileName = installedFont.Key;
+                                    Service.Config.Save();
+
+                                    FontManager.RebuildInterfaceFonts(true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 左侧边栏宽度
+            ImGuiOm.TextIcon(FontAwesomeIcon.TextWidth, Service.Lang.GetText("Settings-LeftTabWidth"));
+            ImGui.SameLine();
+            var leftTabWidthTemp = Service.Config.LeftTabWidth;
+            ImGui.SetNextItemWidth(150f * GlobalFontScale);
+            if (ImGui.InputFloat("###LeftTabWidthInput", ref leftTabWidthTemp, 0, 0, "%.1f"))
+                leftTabWidthTemp = Math.Clamp(leftTabWidthTemp, 100f, ImGui.GetWindowWidth() - 50f);
+            if (ImGui.IsItemDeactivatedAfterEdit())
+            {
+                Service.Config.LeftTabWidth = leftTabWidthTemp;
+                Service.Config.Save();
+            }
+
+
+            // 默认页面
+            ImGuiOm.TextIcon(FontAwesomeIcon.Home, Service.Lang.GetText("Settings-DefaultHomePage"));
+
+            ImGui.SameLine();
+            var defaultHomePage = Service.Config.DefaultHomePage;
+            var previewString = defaultHomePage > 100 ?
+                                    ((ModuleCategories)(defaultHomePage % 100)).ToString() :
+                                    PagesInfo[defaultHomePage];
+
+            ImGui.SetNextItemWidth(150f * GlobalFontScale);
+            using (var combo = ImRaii.Combo("###DefaultHomePageSelectCombo", previewString))
+            {
+                if (combo.Success)
+                {
+                    foreach (var buttonInfo in PagesInfo)
+                    {
+                        if (ImGuiOm.Selectable(buttonInfo.Value))
+                        {
+                            Service.Config.DefaultHomePage = buttonInfo.Key;
+                            Service.Config.Save();
+                        }
+                    }
+
+                    foreach (var buttonInfo in Enum.GetValues<ModuleCategories>())
+                    {
+                        if (buttonInfo == ModuleCategories.无) continue;
+
+                        if (ImGuiOm.Selectable(buttonInfo.ToString()))
+                        {
+                            Service.Config.DefaultHomePage = (int)buttonInfo + 100;
+                            Service.Config.Save();
+                        }
+                    }
+                }
+            }
+        }
+
+        internal static void DrawTooltips()
+        {
+            ImGui.TextColored(ImGuiColors.DalamudYellow, $"{Service.Lang.GetText("Settings-TipMessage0")}:");
+            ImGui.TextWrapped(Service.Lang.GetText("Settings-TipMessage1"));
+            ImGui.TextWrapped(Service.Lang.GetText("Settings-TipMessage2"));
+            ImGui.TextWrapped(Service.Lang.GetText("Settings-TipMessage3"));
         }
     }
 }

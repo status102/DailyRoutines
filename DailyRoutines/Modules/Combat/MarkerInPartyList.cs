@@ -19,10 +19,9 @@ using System.Runtime.InteropServices;
 
 namespace DailyRoutines.Modules;
 
-[ModuleDescription("MarkerInPartyListTitle", "MarkerInPartyListDescription", ModuleCategories.战斗)]
+[ModuleDescription("MarkerInPartyListTitle", "MarkerInPartyListDescription", ModuleCategories.战斗, "status102")]
 public unsafe class MarkerInPartyList : DailyModuleBase
 {
-    public override string Author => "status102";
     private const int DefaultIconId = 61201;
     private static readonly (short X, short Y) BasePosition = (41, 35);
     private static ExcelSheet<Marker>? MarkerSheet;

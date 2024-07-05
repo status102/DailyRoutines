@@ -1,10 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using DailyRoutines.Helpers;
 using DailyRoutines.Infos;
 using DailyRoutines.Managers;
-using Dalamud.Game.ClientState.Conditions;
-using Dalamud.Hooking;
 using Dalamud.Utility.Signatures;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -12,61 +11,58 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 namespace DailyRoutines.Modules;
 
 [ModuleDescription("AutoDismountTitle", "AutoDismountDescription", ModuleCategories.战斗)]
-public unsafe class AutoDismount : DailyModuleBase
+public class AutoDismount : DailyModuleBase
 {
     private static HashSet<uint>? TargetSelfOrAreaActions;
 
     [Signature("E8 ?? ?? ?? ?? 44 0F B6 C3 48 8B D0")]
-    private readonly delegate* unmanaged<ulong, GameObject*> GetGameObjectFromObjectID;
-
-    private Hook<UseActionSelfDelegate>? useActionSelfHook;
+    private static unsafe delegate* unmanaged<ulong, GameObject*> GetGameObjectFromObjectID;
 
     public override void Init()
     {
         Service.Hook.InitializeFromAttributes(this);
-        useActionSelfHook =
-            Service.Hook.HookFromAddress<UseActionSelfDelegate>((nint)ActionManager.MemberFunctionPointers.UseAction,
-                                                                UseActionSelf);
 
         TargetSelfOrAreaActions ??=
-            PresetData.PlayerActions.Where(x => x.Value.CanTargetSelf || x.Value.TargetArea).Select(x => x.Key)
-                      .ToHashSet();
+            PresetData.PlayerActions.Where(x => x.Value.CanTargetSelf || x.Value.TargetArea).Select(x => x.Key).ToHashSet();
 
         TaskHelper ??= new TaskHelper { AbortOnTimeout = true, TimeLimitMS = 5000, ShowDebug = false };
 
-        Service.Condition.ConditionChange += OnConditionChanged;
-        if (Service.Condition[ConditionFlag.Mounted] || Service.Condition[ConditionFlag.Mounted2])
-            OnConditionChanged(ConditionFlag.Mounted, true);
+        Service.UseActionManager.Register(OnUseAction);
     }
 
-    private void OnConditionChanged(ConditionFlag flag, bool value)
+    private void OnUseAction(bool result, ActionType actionType, uint actionID, ulong targetID, uint a4, uint queueState, uint a6)
     {
-        if (flag is ConditionFlag.Mounted or ConditionFlag.Mounted2)
+        if (!Flags.IsOnMount) return;
+        if (!IsNeedToDismount((uint)actionType, actionID, targetID)) return;
+
+        unsafe
         {
-            if (value)
-                useActionSelfHook?.Enable();
-            else
-                useActionSelfHook?.Disable();
+            Service.ClientState.LocalPlayer.ToCharacterStruct()->Mount.CreateAndSetupMount(0, 0, 0, 0, 0, 0, 0);
+        }
+        Task.Run(async () =>
+        {
+            const int iterations = 10;
+            const int delay = 50;
+
+            for (var i = 0; i < iterations; i++)
+            {
+                Service.ExecuteCommandManager.ExecuteCommand(ExecuteCommandFlag.Dismount);
+                unsafe
+                {
+                    Service.ClientState.LocalPlayer.ToCharacterStruct()->Mount.CreateAndSetupMount(0, 0, 0, 0, 0, 0, 0);
+                }
+                await Task.Delay(delay);
+            }
+        });
+
+        unsafe
+        {
+            TaskHelper.DelayNext(100);
+            TaskHelper.Enqueue(() => ActionManager.Instance()->UseAction(actionType, actionID, targetID, a4, queueState, a6));
         }
     }
 
-    private bool UseActionSelf(
-        ActionManager* actionManager, uint actionType, uint actionId, ulong actionTarget, uint a5, uint a6, uint a7,
-        void* a8)
-    {
-        TaskHelper.Abort();
-        if (IsNeedToDismount(actionType, actionId, actionTarget))
-        {
-            useActionSelfHook.Original(actionManager, 5, 9, 0);
-            TaskHelper.Enqueue(
-                () => ActionManager.Instance()->UseAction((ActionType)actionType, actionId, actionTarget, a5, a6, a7,
-                                                          a8));
-        }
-
-        return useActionSelfHook.Original(actionManager, actionType, actionId, actionTarget, a5, a6, a7, a8);
-    }
-
-    private bool IsNeedToDismount(uint actionType, uint actionId, ulong actionTarget)
+    private static unsafe bool IsNeedToDismount(uint actionType, uint actionId, ulong actionTarget)
     {
         // 使用的技能是坐骑
         if ((ActionType)actionType == ActionType.Mount) return false;
@@ -74,8 +70,7 @@ public unsafe class AutoDismount : DailyModuleBase
         var actionManager = ActionManager.Instance();
 
         // 0 - 该技能无须下坐骑
-        if (actionManager->GetActionStatus((ActionType)actionType, actionId, actionTarget, false,
-                                           false) == 0) return false;
+        if (actionManager->GetActionStatus((ActionType)actionType, actionId, actionTarget, false, false) == 0) return false;
 
         // 技能当前不可用
         if (!actionManager->IsActionOffCooldown((ActionType)actionType, actionId)) return false;
@@ -104,15 +99,4 @@ public unsafe class AutoDismount : DailyModuleBase
 
         return true;
     }
-
-    public override void Uninit()
-    {
-        Service.Condition.ConditionChange -= OnConditionChanged;
-
-        base.Uninit();
-    }
-
-    private delegate bool UseActionSelfDelegate(
-        ActionManager* actionManager, uint actionType, uint actionID, ulong targetID = 0xE000_0000, uint a4 = 0,
-        uint a5 = 0, uint a6 = 0, void* a7 = null);
 }

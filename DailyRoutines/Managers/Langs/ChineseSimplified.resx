@@ -1248,9 +1248,8 @@ A / B / C / D / 1 / 2 / 3 / 4</value>
   <data name="PublishTime" xml:space="preserve">
     <value>发布时间</value>
   </data>
-  <data name="LowVersionWarning" xml:space="preserve">
-    <value>版本过低, 请及时升级!
-任何来自非最新版本的报告与请求都不会被受理!</value>
+  <data name="Settings-LowVersionWarning" xml:space="preserve">
+    <value>版本过低, 请及时升级!</value>
   </data>
   <data name="AutoJoinExitDutyDescription" xml:space="preserve">
     <value>添加 /pdr joinexitduty 指令, 使用后可快速进退副本一次</value>
@@ -1272,9 +1271,6 @@ A / B / C / D / 1 / 2 / 3 / 4</value>
   </data>
   <data name="AutoPlayerCommend-BlacklistPlayersAmount" xml:space="preserve">
     <value>已存在 {0} 条玩家数据</value>
-  </data>
-  <data name="AutoPlayerCommend-Content" xml:space="preserve">
-    <value>副本</value>
   </data>
   <data name="AutoPlayerCommend-PlayerName" xml:space="preserve">
     <value>玩家名</value>
@@ -1827,7 +1823,7 @@ A / B / C / D / 1 / 2 / 3 / 4</value>
     <value>调节阈值 (副本)</value>
   </data>
   <data name="OptimizedInteractionDescription" xml:space="preserve">
-    <value>优化了游戏的交互逻辑, 取消了物体在视野外、物体被遮挡、跳跃时、低空飞行时等的禁止交互限制</value>
+    <value>优化了游戏的交互逻辑, 取消了物体在视野外、物体被遮挡、跳跃时、低空飞行时等的禁止交互限制 (副本内不可用)</value>
   </data>
   <data name="OptimizedInteractionTitle" xml:space="preserve">
     <value>游戏原生交互优化</value>
@@ -2279,5 +2275,60 @@ A / B / C / D / 1 / 2 / 3 / 4</value>
   </data>
   <data name="AutoFateSyncTitle" xml:space="preserve">
     <value>自动危命任务等级同步</value>
+  </data>
+  <data name="BlockInputWhenFishingDescription" xml:space="preserve">
+    <value>抛竿期间, 禁止绝大部分无关按键输入游戏, 防止意外打断钓鱼进程</value>
+  </data>
+  <data name="BlockInputWhenFishingTitle" xml:space="preserve">
+    <value>抛竿期间禁止按键输入</value>
+  </data>
+  <data name="Content" xml:space="preserve">
+    <value>副本</value>
+  </data>
+  <data name="AutoSkipLogoDescription" xml:space="preserve">
+    <value>自动跳过游戏开始时的 Logo 画面, 使客户端直接进入登录界面</value>
+  </data>
+  <data name="AutoSkipLogoTitle" xml:space="preserve">
+    <value>自动跳过 Logo 画面</value>
+  </data>
+  <data name="Settings-TipMessage3" xml:space="preserve">
+    <value>3. 如遇游戏崩溃, 请先自查所安装的其他插件与软件, 进行任何反馈前务必先确认相关情况能在 仅 开启了 Daily Routines 的情况下被稳定复现</value>
+  </data>
+  <data name="FastRidePillionDescription" xml:space="preserve">
+    <value>启用后, 当右键正在骑乘多人坐骑的队友时, 自动进行共同骑乘</value>
+  </data>
+  <data name="FastRidePillionTitle" xml:space="preserve">
+    <value>快速共同骑乘</value>
+  </data>
+  <data name="Enabled" xml:space="preserve">
+    <value>已启用</value>
+  </data>
+  <data name="AutoJoinExitDuty-AlreadyInParty" xml:space="preserve">
+    <value>组队状态下禁止使用</value>
+  </data>
+  <data name="AutoRetainerWork-CreateNewBaseOnExisted" xml:space="preserve">
+    <value>以此为基础创建新配置</value>
+  </data>
+  <data name="Settings-FontSelect" xml:space="preserve">
+    <value>界面字体选择</value>
+  </data>
+  <data name="Settings-UnknownFont" xml:space="preserve">
+    <value>未知字体</value>
+  </data>
+  <data name="Settings-InvalidLocalData" xml:space="preserve">
+    <value>时间同步失败,
+请检查本地网络设置并尝试重启插件。</value>
+  </data>
+  <data name="Settings-LeftTabWidth" xml:space="preserve">
+    <value>左侧边栏宽度</value>
+  </data>
+  <data name="AutoLeveQuests-NoDelayHelp" xml:space="preserve">
+    <value>注: 模块运行时自动屏蔽目标选择、模型旋转数据上传服务器, 故没有任何延迟调整选项</value>
+  </data>
+  <data name="AutoPetFollowDescription" xml:space="preserve">
+    <value>脱战后, 若当前场上存在自身召唤物, 则自动对其下达跟随命令</value>
+  </data>
+  <data name="AutoPetFollowTitle" xml:space="preserve">
+    <value>自动召唤物跟随</value>
   </data>
 </root>

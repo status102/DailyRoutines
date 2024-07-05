@@ -11,13 +11,13 @@ using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Interface;
 using Dalamud.Interface.Colors;
-using Dalamud.Interface.Utility;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using ImGuiNET;
 using Lumina.Excel.GeneratedSheets;
 
 namespace DailyRoutines.Modules;
 
+[PrecedingModule([typeof(AutoSkipLogo)])]
 [ModuleDescription("AutoLoginTitle", "AutoLoginDescription", ModuleCategories.一般)]
 public unsafe class AutoLogin : DailyModuleBase
 {
@@ -305,7 +305,7 @@ public unsafe class AutoLogin : DailyModuleBase
     {
         if (InterruptByConflictKey()) return true;
         if (!Throttler.Throttle("SelectCharacter", 100)) return false;
-
+        
         var agent = AgentLobby.Instance();
         if (agent == null) return false;
 

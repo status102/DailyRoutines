@@ -158,7 +158,7 @@ public unsafe class AutoSplitStacks : DailyModuleBase
                 ImGui.SameLine();
                 ImGui.BeginDisabled(SelectedItem == null);
                 if (ImGuiOm.ButtonIconWithTextVertical(FontAwesomeIcon.Plus, Service.Lang.GetText("Add"),
-                                                       new(ImGui.CalcTextSize("三个字").X, itemSize.Y)))
+                                                       buttonSize:new(ImGui.CalcTextSize("三个字").X, itemSize.Y)))
                 {
                     var newGroup = new SplitGroup(SelectedItem.RowId, SplitAmountInput);
                     if (!ModuleConfig.SplitGroups.Contains(newGroup))
@@ -400,7 +400,7 @@ public unsafe class AutoSplitStacks : DailyModuleBase
         TaskHelper.DelayNext($"ContextMenu_{itemID}_{foundType}_{foundSlot}", 20, false, 2);
         TaskHelper.Enqueue(() =>
         {
-            ClickContextMenuByText(LuminaCache.GetRow<Addon>(92).Text.RawString);
+            ClickHelper.ContextMenu(LuminaCache.GetRow<Addon>(92).Text.RawString);
             return true;
         }, null, 2);
 
