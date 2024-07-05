@@ -24,7 +24,7 @@ public unsafe class MarkerInPartyList : DailyModuleBase
 {
     public override string Author => "status102";
     private const int DefaultIconId = 61201;
-    private static readonly (short X, short Y) BasePosition = (52, 15);
+    private static readonly (short X, short Y) BasePosition = (41, 35);
     private static ExcelSheet<Marker>? MarkerSheet;
 
     [Signature("E8 ?? ?? ?? ?? 4C 8B C5 8B D7 48 8B CB E8", DetourName = nameof(DetourLocalMarkingFunc))]
@@ -39,6 +39,7 @@ public unsafe class MarkerInPartyList : DailyModuleBase
 
     public override void Init()
     {
+        _isBuilt = false;
         _config = LoadConfig<Config>() ?? new();
 
         Service.Hook.InitializeFromAttributes(this);
@@ -89,6 +90,10 @@ public unsafe class MarkerInPartyList : DailyModuleBase
 
     private static void ResetmarkedObject(ushort obj)
     {
+        foreach (var i in Enumerable.Range(0, 8))
+        {
+            HideImageNode(i);
+        }
         _markedObject.Clear();
         ResetPartyMemberList();
     }
@@ -206,13 +211,6 @@ public unsafe class MarkerInPartyList : DailyModuleBase
 
             foreach (var i in Enumerable.Range(10, 8))
             {
-                var parentNode = partylist->GetNodeById((uint)i);
-                if (parentNode is null)
-                {
-                    Service.Log.Error($"Failed to get parentNode-{i}");
-                    continue;
-                }
-
                 var imageNode = GenerateImageNode();
                 if (imageNode is null)
                 {
@@ -221,7 +219,8 @@ public unsafe class MarkerInPartyList : DailyModuleBase
                 }
                 imageNode->AtkResNode.NodeID = 114514;
                 _imageNodes.Add((nint)imageNode);
-                AttachToComponentNode(parentNode, imageNode);
+
+                LinkNodeAtEnd((AtkResNode*)imageNode, partylist);
             }
             _isBuilt = true;
         }
@@ -235,13 +234,18 @@ public unsafe class MarkerInPartyList : DailyModuleBase
             if (!_isBuilt)
                 return;
 
+            var partylist = (AtkUnitBase*)Service.Gui.GetAddonByName("_PartyList");
+            if (partylist is null || partylist->UldManager.LoadedState is not AtkLoadState.Loaded)
+            {
+                Service.Log.Error("Failed to get partylist");
+                return;
+            }
+
             foreach (var item in _imageNodes)
             {
-                Service.Log.Info($"Detach:{item:X}");
-                DetachFromComponentNode((AtkImageNode*)item);
+                UnlinkAndFreeImageNode((AtkImageNode*)item, partylist);
             }
             _imageNodes.Clear();
-            _isBuilt = false;
         }
     }
 
@@ -255,11 +259,12 @@ public unsafe class MarkerInPartyList : DailyModuleBase
         if (node is null)
             return;
 
+        var component = partylist->GetNodeById((uint)(10 + i));
+        (float x, float y) = (component->X + BasePosition.X + _config.IconOffset.X, component->Y + BasePosition.Y + _config.IconOffset.Y);
         node->LoadIconTexture(iconId, 0);
-        (float x, float y) = (BasePosition.X + _config.IconOffset.X, BasePosition.Y + _config.IconOffset.Y);
-        node->AtkResNode.SetPositionFloat(x, y);
         node->AtkResNode.SetHeight((ushort)_config.Size);
         node->AtkResNode.SetWidth((ushort)_config.Size);
+        node->AtkResNode.SetPositionFloat(x, y);
         node->AtkResNode.ToggleVisibility(true);
 
         ModifyPartyMemberNumber(partylist, false);
@@ -278,59 +283,19 @@ public unsafe class MarkerInPartyList : DailyModuleBase
 
     private static void RefreshPosition()
     {
-        foreach (var item in _imageNodes)
+        var partylist = (AtkUnitBase*)Service.Gui.GetAddonByName("_PartyList");
+        if (partylist is null || !IsAddonAndNodesReady(partylist))
+            return;
+        foreach (var item in _imageNodes.Zip(Enumerable.Range(10, 8)))
         {
-            var node = (AtkImageNode*)item;
-            (var x, var y) = (BasePosition.X + _config.IconOffset.X, BasePosition.Y + _config.IconOffset.Y);
+            var node = (AtkImageNode*)item.First;
+            var component = partylist->GetNodeById((uint)(10 + item.Second));
+            (float x, float y) = (component->X + BasePosition.X + _config.IconOffset.X, component->Y + BasePosition.Y + _config.IconOffset.Y);
             node->AtkResNode.SetPositionFloat(x, y);
             node->AtkResNode.SetHeight((ushort)_config.Size);
             node->AtkResNode.SetWidth((ushort)_config.Size);
             node->AtkResNode.ToggleVisibility(true);
         }
-    }
-
-    private static void AttachToComponentNode(AtkResNode* parent, AtkImageNode* node, bool toFront = true)
-    {
-        if (parent is null || node is null)
-            return;
-
-        var lastNode = parent->GetComponent()->UldManager.RootNode;
-        node->AtkResNode.ParentNode = parent;
-        if (lastNode is null)
-            parent->GetComponent()->UldManager.RootNode = &node->AtkResNode;
-
-        else if (toFront)
-        {
-            while (lastNode->PrevSiblingNode != null)
-                lastNode = lastNode->PrevSiblingNode;
-
-            node->AtkResNode.NextSiblingNode = lastNode;
-            lastNode->PrevSiblingNode = &node->AtkResNode;
-        }
-        else
-        {
-            node->AtkResNode.PrevSiblingNode = lastNode;
-            lastNode->NextSiblingNode = &node->AtkResNode;
-            parent->GetComponent()->UldManager.RootNode = &node->AtkResNode;
-        }
-        parent->GetComponent()->UldManager.UpdateDrawNodeList();
-    }
-
-    private static void DetachFromComponentNode(AtkImageNode* node)
-    {
-        if (node is null)
-            return;
-
-        if (node->AtkResNode.ParentNode->GetComponent()->UldManager.RootNode == node)
-            node->AtkResNode.ParentNode->GetComponent()->UldManager.RootNode = node->AtkResNode.PrevSiblingNode;
-
-        if (node->AtkResNode.NextSiblingNode != null && node->AtkResNode.NextSiblingNode->PrevSiblingNode == node)
-            node->AtkResNode.NextSiblingNode->PrevSiblingNode = node->AtkResNode.PrevSiblingNode;
-
-        if (node->AtkResNode.PrevSiblingNode != null && node->AtkResNode.PrevSiblingNode->NextSiblingNode == node)
-            node->AtkResNode.PrevSiblingNode->NextSiblingNode = node->AtkResNode.NextSiblingNode;
-
-        node->AtkResNode.ParentNode->GetComponent()->UldManager.UpdateDrawNodeList();
     }
 
     #endregion
